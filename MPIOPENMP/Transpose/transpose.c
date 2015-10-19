@@ -408,9 +408,10 @@ int main(int argc, char ** argv)
 
   abserr = 0.0;
   istart = 0;
-  #pragma omp parallel for private (i)
-  for (j=0;j<Block_order;j++) for (i=0;i<order; i++) {
-      abserr += ABS(B(i,j) - (double)(order*i + j+colstart));
+  #pragma omp parallel for private (i,j)
+  for (j=0;j<Block_order;j++)
+      for (i=0;i<order; i++) {
+        abserr += ABS(B(i,j) - (double)(order*i + j+colstart));
   }
 
   MPI_Reduce(&abserr, &abserr_tot, 1, MPI_DOUBLE, MPI_SUM, root, MPI_COMM_WORLD);

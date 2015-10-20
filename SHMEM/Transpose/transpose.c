@@ -130,7 +130,7 @@ int main(int argc, char ** argv)
   int my_ID;               /* rank                                  */
   int root=0;              /* rank of root                          */
   int iterations;          /* number of times to do the transpose   */
-  int i, j, it, jt, istart;/* dummies                               */
+  int istart;              /* dummies                               */
   int iter;                /* index of iteration                    */
   int phase;               /* phase inside staged communication     */
   int colstart;            /* starting column for owning rank       */
@@ -296,10 +296,28 @@ int main(int argc, char ** argv)
   
   /* Fill the original column matrix                                                */
   istart = 0;  
-  for (j=0;j<Block_order;j++) 
-    for (i=0;i<order; i++)  {
-      A(i,j) = (double) (order*(j+colstart) + i);
-      B(i,j) = -1.0;
+
+  if (tiling) {
+#ifdef COLLAPSE
+    #pragma omp parallel for collapse(2)
+#else
+    #pragma omp parallel for
+#endif
+    for (int j=0; j<Block_order; j+=Tile_order)
+      for (int i=0; i<order; i+=Tile_order)
+        for (int jt=j; jt<MIN(Block_order,j+Tile_order);jt++)
+          for (int it=i; it<MIN(order,i+Tile_order); it++) {
+            A(it,jt) = (double) (order*(jt+colstart) + it);
+            B(it,jt) = -1.0;
+          }
+  }
+  else {
+    #pragma omp parallel for
+    for (int j=0;j<Block_order;j++)
+      for (int i=0;i<order; i++) {
+        A(i,j) = (double) (order*(j+colstart) + i);
+        B(i,j) = -1.0;
+    }
   }
 
   shmem_barrier_all();
@@ -313,40 +331,55 @@ int main(int argc, char ** argv)
     }
 
     /* do the local transpose                                                     */
-    istart = colstart; 
+    istart = colstart;
     if (!tiling) {
-      for (i=0; i<Block_order; i++) 
-        for (j=0; j<Block_order; j++) {
+    #pragma omp parallel for
+      for (int i=0; i<Block_order; i++) 
+        for (int j=0; j<Block_order; j++) {
           B(j,i) = A(i,j);
 	}
     }
     else {
-      for (i=0; i<Block_order; i+=Tile_order) 
-        for (j=0; j<Block_order; j+=Tile_order) 
-          for (it=i; it<MIN(Block_order,i+Tile_order); it++)
-            for (jt=j; jt<MIN(Block_order,j+Tile_order);jt++)
+#ifdef COLLAPSE
+      #pragma omp parallel for collapse(2)
+#else
+      #pragma omp parallel for
+#endif
+      for (int i=0; i<Block_order; i+=Tile_order) 
+        for (int j=0; j<Block_order; j+=Tile_order) 
+          for (int it=i; it<MIN(Block_order,i+Tile_order); it++)
+            for (int jt=j; jt<MIN(Block_order,j+Tile_order);jt++) {
               B(jt,it) = A(it,jt); 
+	    }
     }
 
     for (phase=1; phase<Num_procs; phase++){
       recv_from = (my_ID + phase            )%Num_procs;
       send_to   = (my_ID - phase + Num_procs)%Num_procs;
 
-      istart = send_to*Block_order; 
+      istart = send_to*Block_order;
       if (!tiling) {
-        for (i=0; i<Block_order; i++) 
-          for (j=0; j<Block_order; j++){
+        #pragma omp parallel for
+        for (int i=0; i<Block_order; i++)
+          for (int j=0; j<Block_order; j++){
 	    Work_out(j,i) = A(i,j);
 	  }
       }
       else {
-        for (i=0; i<Block_order; i+=Tile_order) 
-          for (j=0; j<Block_order; j+=Tile_order) 
-            for (it=i; it<MIN(Block_order,i+Tile_order); it++)
-              for (jt=j; jt<MIN(Block_order,j+Tile_order);jt++) {
-                Work_out(jt,it) = A(it,jt); 
+#ifdef COLLAPSE
+        #pragma omp parallel forcollapse(2)
+#else
+        #pragma omp parallel for
+#endif
+        for (int i=0; i<Block_order; i+=Tile_order)
+          for (int j=0; j<Block_order; j+=Tile_order)
+            for (int it=i; it<MIN(Block_order,i+Tile_order); it++)
+              for (int jt=j; jt<MIN(Block_order,j+Tile_order);jt++) {
+                Work_out(jt,it) = A(it,jt);
 	      }
       }
+
+#ifndef SYNCHRONOUS  
 
       shmem_double_put(&Work_in_p[phase-1][0], &Work_out_p[0], Block_size, send_to);
       shmem_fence();
@@ -356,8 +389,8 @@ int main(int argc, char ** argv)
 
       istart = recv_from*Block_order; 
       /* scatter received block to transposed matrix; no need to tile */
-      for (j=0; j<Block_order; j++)
-        for (i=0; i<Block_order; i++) 
+      for (int j=0; j<Block_order; j++)
+        for (int i=0; i<Block_order; i++) 
           B(i,j) = Work_in(phase, i,j);
     }  /* end of phase loop  */
   } /* end of iterations */
@@ -372,8 +405,10 @@ int main(int argc, char ** argv)
 
   abserr[0] = 0.0;
   istart = 0;
-  for (j=0;j<Block_order;j++) for (i=0;i<order; i++) {
-      abserr[0] += ABS(B(i,j) - (double)(order*i + j+colstart));
+  #pragma omp parallel for
+  for (int j=0;j<Block_order;j++)
+      for (int i=0;i<order; i++) {
+          abserr[0] += ABS(B(i,j) - (double)(order*i + j+colstart));
   }
 
   for(i=0;i<_SHMEM_BCAST_SYNC_SIZE;i++)

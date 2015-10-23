@@ -16,7 +16,7 @@ COLLAPSEFLAG = -DCOLLAPSE
 #DEBUGFLAG    = -DVERBOSE
 #description: default diagnostic style is silent
 
-USERFLAGS     = 
+USERFLAGS     = -qlanglvl=stdc99 -qsuppress=1506-1197
 #description: parameter to specify optional flags
 
 #set the following variables for custom libraries and/or other objects

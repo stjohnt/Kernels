@@ -7,7 +7,7 @@ OPTFLAGS    = $(DEFAULT_OPT_FLAGS)
 
 #uncomment any of the following flags (and change values) to change defaults
 
-BLOCKFLAG    = -DSYNCHRONOUS
+#BLOCKFLAG    = -DSYNCHRONOUS
 #description: turn on synchronous (blocking) communications
 
 #DEBUGFLAG    = -DVERBOSE

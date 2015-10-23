@@ -129,27 +129,27 @@ o The original and transposed matrices are called A and B
 
 int main(int argc, char ** argv)
 {
-  int Block_order;         /* number of columns owned by rank       */
-  int Block_size;          /* size of a single block                */
-  int Colblock_size;       /* size of column block                  */
-  int Tile_order=32;       /* default Tile order                    */
-  int tiling;              /* boolean: true if tiling is used       */
+  size_t Block_order;         /* number of columns owned by rank       */
+  size_t Block_size;          /* size of a single block                */
+  size_t Colblock_size;       /* size of column block                  */
+  size_t Tile_order=32;       /* default Tile order                    */
+  size_t tiling;              /* boolean: true if tiling is used       */
   int Num_procs;           /* number of ranks                       */
-  int order;               /* order of overall matrix               */
+  size_t order;               /* order of overall matrix               */
   int send_to, recv_from;  /* ranks with which to communicate       */
   MPI_Status status;       
 #ifndef SYNCHRONOUS
   MPI_Request send_req;
   MPI_Request recv_req;
 #endif
-  long bytes;              /* combined size of matrices             */
+  size_t bytes;              /* combined size of matrices             */
   int my_ID;               /* rank                                  */
   int root=0;              /* ID of root rank                       */
-  int iterations;          /* number of times to do the transpose   */
-  int i, j, it, jt, istart;/* dummies                               */
-  int iter;                /* index of iteration                    */
-  int phase;               /* phase inside staged communication     */
-  int colstart;            /* starting column for owning rank       */
+  size_t iterations;          /* number of times to do the transpose   */
+  size_t i, j, it, jt, istart;/* dummies                               */
+  size_t iter;                /* index of iteration                    */
+  size_t phase;               /* phase inside staged communication     */
+  size_t colstart;            /* starting column for owning rank       */
   int nthread_input,       /* thread parameters                     */
       nthread; 
   int error;               /* error flag                            */
@@ -193,18 +193,18 @@ int main(int argc, char ** argv)
 
     iterations  = atoi(*++argv);
     if(iterations < 1){
-      printf("ERROR: iterations must be >= 1 : %d \n",iterations);
+      printf("ERROR: iterations must be >= 1 : %zu \n",iterations);
       error = 1; goto ENDOFTESTS;
     }
 
     order = atoi(*++argv);
     if (order < Num_procs) {
-      printf("ERROR: matrix order %d should at least # procs %d\n", 
+      printf("ERROR: matrix order %zu should at least # procs %d\n", 
              order, Num_procs);
       error = 1; goto ENDOFTESTS;
     }
     if (order%Num_procs) {
-      printf("ERROR: matrix order %d should be divisible by # procs %d\n",
+      printf("ERROR: matrix order %zu should be divisible by # procs %d\n",
              order, Num_procs);
       error = 1; goto ENDOFTESTS;
     }
@@ -215,10 +215,10 @@ int main(int argc, char ** argv)
   }
   bail_out(error);
   /*  Broadcast input data to all ranks */
-  MPI_Bcast(&order,         1, MPI_INT, root, MPI_COMM_WORLD);
-  MPI_Bcast(&iterations,    1, MPI_INT, root, MPI_COMM_WORLD);
-  MPI_Bcast(&Tile_order,    1, MPI_INT, root, MPI_COMM_WORLD);
-  MPI_Bcast(&nthread_input, 1, MPI_INT, root, MPI_COMM_WORLD);
+  MPI_Bcast(&order,         1, MPI_AINT, root, MPI_COMM_WORLD);
+  MPI_Bcast(&iterations,    1, MPI_AINT, root, MPI_COMM_WORLD);
+  MPI_Bcast(&Tile_order,    1, MPI_AINT, root, MPI_COMM_WORLD);
+  MPI_Bcast(&nthread_input, 1, MPI_AINT, root, MPI_COMM_WORLD);
 
   omp_set_num_threads(nthread_input);
 
@@ -247,10 +247,10 @@ int main(int argc, char ** argv)
     printf("MPI+OpenMP matrix transpose: B = A^T\n");
     printf("Number of ranks      = %d\n", Num_procs);
     printf("Number of threads    = %d\n", omp_get_max_threads());
-    printf("Matrix order         = %d\n", order);
-    printf("Number of iterations = %d\n", iterations);
+    printf("Matrix order         = %zu\n", order);
+    printf("Number of iterations = %zu\n", iterations);
     if (tiling) {
-      printf("Tile size            = %d\n", Tile_order);
+      printf("Tile size            = %zu\n", Tile_order);
 #ifdef COLLAPSE
        printf("Using loop collapse\n");
     }
@@ -262,7 +262,7 @@ int main(int argc, char ** argv)
     printf("Blocking messages\n");
   }
 
-  bytes = 2.0 * sizeof(double) * order * order;
+  bytes = 2UL * sizeof(double) * order * order;
 
 /*********************************************************************
 ** Create the column block of the test matrix, the row block of the 

@@ -262,7 +262,7 @@ int main(int argc, char ** argv)
   MPI_Info_create (&rma_winfo);
   MPI_Info_set (rma_winfo, "no locks", "true");
 #ifdef MANYPUT
-  MPI_Win_allocate (Colblock_size*sizeof(double), sizeof(double), rma_winfo, MPI_COMM_WORLD, (void *) &B_p, &rma_win);
+  PRK_Win_allocate (Colblock_size*sizeof(double), sizeof(double), rma_winfo, MPI_COMM_WORLD, (void *) &B_p, &rma_win);
 #else
   B_p = (double *)malloc(Colblock_size*sizeof(double));
 #endif
@@ -281,7 +281,7 @@ int main(int argc, char ** argv)
     bail_out(error);
  
 #ifndef MANYPUT
-    MPI_Win_allocate (Block_size*(Num_procs-1)*sizeof(double), sizeof(double), 
+    PRK_Win_allocate (Block_size*(Num_procs-1)*sizeof(double), sizeof(double), 
                       rma_winfo, MPI_COMM_WORLD, &Work_in_p, &rma_win);
     if (Work_in_p == NULL){
       printf(" Error allocating space for work on node %d\n",my_ID);
@@ -432,7 +432,7 @@ int main(int argc, char ** argv)
     if (passive_target) {
       MPI_Win_unlock_all(rma_win);
     }
-    MPI_Win_free(&rma_win);
+    PRK_Win_free(&rma_win);
   }
  
   MPI_Finalize();

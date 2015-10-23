@@ -202,8 +202,13 @@ int main(int argc, char ** argv)
  
     if (argc >= 4) Tile_order     = atoi(*++argv);
     if (argc >= 5) passive_target = atoi(*++argv);
+#if MPI_VERSION < 3
+    flush_local  = 0;
+    flush_bundle = 1;
+#else
     if (argc >= 6) flush_local    = atoi(*++argv);
     if (argc >= 7) flush_bundle   = atoi(*++argv);
+#endif
  
     ENDOFTESTS:;
   }
@@ -219,7 +224,11 @@ int main(int argc, char ** argv)
           printf("Tile size            = %d\n", Tile_order);
     else  printf("Untiled\n");
     if (passive_target) {
+#if MPI_VERSION < 3
+        printf("Synchronization      = MPI_Win_(un)lock\n");
+#else
         printf("Synchronization      = MPI_Win_flush%s (bundle=%d)\n", flush_local ? "_local" : "", flush_bundle);
+#endif
     } else {
         printf("Synchronization      = MPI_Win_fence\n");
     }
@@ -291,9 +300,11 @@ int main(int argc, char ** argv)
 #endif
   }
 
+#if MPI_VERSION >=3
   if (passive_target && Num_procs>1) {
     MPI_Win_lock_all(MPI_MODE_NOCHECK,rma_win);
   }
+#endif
   
   /* Fill the original column matrix                                                */
   istart = 0;  
@@ -351,6 +362,10 @@ int main(int argc, char ** argv)
                 Work_out(phase-1,jt,it) = A(it,jt); 
               }
       }
+#if MPI_VERSION < 3
+        MPI_Win_lock(MPI_LOCK_SHARED, send_to, MPI_MODE_NOCHECK, rma_win);
+#endif
+
 #ifdef MANYPUT
       for (j = 0; j < Block_order; j++) {
         MPI_Put (&Work_out(phase-1, 0, j), Block_order, MPI_DOUBLE, send_to, (my_ID * Block_order)  + j * order, Block_order, MPI_DOUBLE, rma_win);
@@ -361,6 +376,9 @@ int main(int argc, char ** argv)
                Block_size, MPI_DOUBLE, rma_win); 
 #endif // MANYPUT
       if (passive_target) {
+#if MPI_VERSION < 3
+        MPI_Win_unlock(send_to, rma_win);
+#else
         if (flush_bundle==1) {
             if (flush_local==1) {
                 MPI_Win_flush_local(send_to, rma_win);
@@ -375,11 +393,14 @@ int main(int argc, char ** argv)
                 MPI_Win_flush_all(rma_win);
             }
         }
+#endif
       }
     }  /* end of phase loop for puts  */
     if (Num_procs>1) {
       if (passive_target) {
+#if MPI_VERSION >= 3
           MPI_Win_flush_all(rma_win);
+#endif
           MPI_Barrier(MPI_COMM_WORLD);
       } else {
           MPI_Win_fence (MPI_MODE_NOSUCCEED, rma_win);
@@ -429,9 +450,11 @@ int main(int argc, char ** argv)
   bail_out(error);
 
   if (rma_win!=MPI_WIN_NULL) {
+#if MPI_VERSION >=3
     if (passive_target) {
       MPI_Win_unlock_all(rma_win);
     }
+#endif
     PRK_Win_free(&rma_win);
   }
  

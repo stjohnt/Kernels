@@ -226,7 +226,7 @@ int main(int argc, char ** argv)
 
   /* a non-positive tile size means no tiling of the local transpose */
   tiling = (Tile_order > 0) && (Tile_order < order);
-  bytes = 2 * sizeof(double) * order * order;
+  bytes = 2UL * sizeof(double) * order * order;
 
 /*********************************************************************
 ** The matrix is broken up into column blocks that are mapped one to a 

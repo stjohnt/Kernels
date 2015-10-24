@@ -129,24 +129,24 @@ o The original and transposed matrices are called A and B
  
 int main(int argc, char ** argv)
 {
-  long Block_order;         /* number of columns owned by rank       */
-  long Block_size;          /* size of a single block                */
-  long Colblock_size;       /* size of column block                  */
-  int Tile_order=32;       /* default Tile order                    */
-  int tiling;              /* boolean: true if tiling is used       */
+  size_t Block_order;         /* number of columns owned by rank       */
+  size_t Block_size;          /* size of a single block                */
+  size_t Colblock_size;       /* size of column block                  */
+  size_t Tile_order=32;       /* default Tile order                    */
+  size_t tiling;              /* boolean: true if tiling is used       */
   int Num_procs;           /* number of ranks                       */
-  long order;               /* order of overall matrix               */
+  size_t order;               /* order of overall matrix               */
   int send_to, recv_from;  /* ranks with which to communicate       */
   MPI_Status status;       
   MPI_Request send_req, recv_req;
-  long bytes;              /* combined size of matrices             */
+  size_t bytes;              /* combined size of matrices             */
   int my_ID;               /* rank                                  */
   int root=0;              /* rank of root                          */
-  int iterations;          /* number of times to do the transpose   */
-  int i, j, it, jt, istart;/* dummies                               */
-  int iter;                /* index of iteration                    */
-  int phase;               /* phase inside staged communication     */
-  int colstart;            /* starting column for owning rank       */
+  size_t iterations;          /* number of times to do the transpose   */
+  size_t i, j, it, jt, istart;/* dummies                               */
+  size_t iter;                /* index of iteration                    */
+  size_t phase;               /* phase inside staged communication     */
+  size_t colstart;            /* starting column for owning rank       */
   int error;               /* error flag                            */
   double *A_p;             /* original matrix column block          */
   double *B_p;             /* transposed matrix column block        */
@@ -160,7 +160,7 @@ int main(int argc, char ** argv)
          avgtime;
   MPI_Win  rma_win = MPI_WIN_NULL;
   MPI_Info rma_winfo = MPI_INFO_NULL;
-  int passive_target = 0,  /* use passive target RMA sync           */
+  size_t passive_target = 0,  /* use passive target RMA sync           */
       flush_local = 1,     /* flush local (or remote) after put     */
       flush_bundle = 1;    /* flush every <bundle> put calls        */
  
@@ -235,12 +235,12 @@ int main(int argc, char ** argv)
   }
   
   /*  Broadcast input data to all ranks */
-  MPI_Bcast (&order,          1, MPI_LONG, root, MPI_COMM_WORLD);
-  MPI_Bcast (&iterations,     1, MPI_INT,  root, MPI_COMM_WORLD);
-  MPI_Bcast (&Tile_order,     1, MPI_INT,  root, MPI_COMM_WORLD);
-  MPI_Bcast (&passive_target, 1, MPI_INT,  root, MPI_COMM_WORLD);
-  MPI_Bcast (&flush_local,    1, MPI_INT,  root, MPI_COMM_WORLD);
-  MPI_Bcast (&flush_bundle,   1, MPI_INT,  root, MPI_COMM_WORLD);
+  MPI_Bcast (&order,          1, MPI_AINT, root, MPI_COMM_WORLD);
+  MPI_Bcast (&iterations,     1, MPI_AINT,  root, MPI_COMM_WORLD);
+  MPI_Bcast (&Tile_order,     1, MPI_AINT,  root, MPI_COMM_WORLD);
+  MPI_Bcast (&passive_target, 1, MPI_AINT,  root, MPI_COMM_WORLD);
+  MPI_Bcast (&flush_local,    1, MPI_AINT,  root, MPI_COMM_WORLD);
+  MPI_Bcast (&flush_bundle,   1, MPI_AINT,  root, MPI_COMM_WORLD);
  
   /* a non-positive tile size means no tiling of the local transpose */
   tiling = (Tile_order > 0) && (Tile_order < order);

@@ -111,10 +111,10 @@ o The original and transposed matrices are called A and B
 #include <par-res-kern_general.h>
 #include <par-res-kern_shmem.h>
 
-#define A(i,j)        A_p[(i+istart)+order*(j)]
-#define B(i,j)        B_p[(i+istart)+order*(j)]
-#define Work_in(targetBuffer, i,j)  Work_in_p[targetBuffer][i+Block_order*(j)]
-#define Work_out(i,j) Work_out_p[i+Block_order*(j)]
+#define A(i,j)        A_ptr[(i+istart)+order*(j)]
+#define B(i,j)        B_ptr[(i+istart)+order*(j)]
+#define Work_in(targetBuffer, i,j)  Work_in_ptr[targetBuffer][i+Block_order*(j)]
+#define Work_out(i,j) Work_out_ptr[i+Block_order*(j)]
 
 int main(int argc, char ** argv)
 {
@@ -137,10 +137,10 @@ int main(int argc, char ** argv)
   int phase;               /* phase inside staged communication     */
   int colstart;            /* starting column for owning rank       */
   int error;               /* error flag                            */
-  double *A_p;             /* original matrix column block          */
-  double *B_p;             /* transposed matrix column block        */
-  double **Work_in_p;      /* workspace for the transpose function  */
-  double *Work_out_p;      /* workspace for the transpose function  */
+  double *A_p, *A_ptr;     /* original matrix column block          */
+  double *B_p, *B_ptr;     /* transposed matrix column block        */
+  double **Work_in_p, **Work_in_ptr;      /* workspace for the transpose function  */
+  double *Work_out_p, *Work_out_ptr;      /* workspace for the transpose function  */
   double epsilon = 1.e-8;  /* error tolerance                       */
   double avgtime;          /* timing parameters                     */
   long   *pSync_bcast;     /* work space for collectives            */
@@ -152,6 +152,11 @@ int main(int argc, char ** argv)
          *abserr_tot;      /* local and aggregate error             */
   int    *send_flag,
          *recv_flag;       /* synchronization flags                 */
+  int *local_flag;
+  int Num_groups;
+  int group_size;
+  int group_ID, group_procs;
+  int local_ID;
   int    *arguments;       /* command line arguments                */
 
 /*********************************************************************
@@ -173,7 +178,7 @@ int main(int argc, char ** argv)
   pWrk             = (double *) prk_shmem_align(prk_get_alignment(),sizeof(double) * PRK_SHMEM_REDUCE_MIN_WRKDATA_SIZE);
   local_trans_time = (double *) prk_shmem_align(prk_get_alignment(),sizeof(double));
   trans_time       = (double *) prk_shmem_align(prk_get_alignment(),sizeof(double));
-  arguments        = (int *)    prk_shmem_align(prk_get_alignment(),4*sizeof(int));
+  arguments        = (int *)    prk_shmem_align(prk_get_alignment(),5*sizeof(int));
   abserr           = (double *) prk_shmem_align(prk_get_alignment(),2*sizeof(double));
   abserr_tot       = abserr + 1;
   if (!pSync_bcast || !pSync_reduce || !pWrk || !local_trans_time ||
@@ -194,21 +199,29 @@ int main(int argc, char ** argv)
 *********************************************************************/
   error = 0;
   if (my_ID == root) {
-    if (argc != 4 && argc != 5){
-      printf("Usage: %s <# iterations> <matrix order> <# buffers> [Tile size]\n",
+    if (argc != 5 && argc != 6){
+      printf("Usage: %s <#ranks per coherence domain> <# iterations> <matrix order> <# buffers> [Tile size]\n",
                                                                *argv);
       error = 1; goto ENDOFTESTS;
     }
 
+    group_size = atoi(*++argv);
+    arguments[0]=group_size;
+    if (group_size < 1) {
+      printf("ERROR: # ranks per coherence domain must be >= 1 : %d \n", group_size);
+      error = 1;
+      goto ENDOFTESTS;
+    }
+
     iterations  = atoi(*++argv);
-    arguments[0]=iterations;
+    arguments[1]=iterations;
     if(iterations < 1){
       printf("ERROR: iterations must be >= 1 : %d \n",iterations);
       error = 1; goto ENDOFTESTS;
     }
 
     order = atoi(*++argv);
-    arguments[1]=order;
+    arguments[2]=order;
     if (order < Num_procs) {
       printf("ERROR: matrix order %d should at least # procs %d\n", 
              order, Num_procs);
@@ -221,16 +234,16 @@ int main(int argc, char ** argv)
     }
 
     bufferCount = atoi(*++argv);
-    arguments[2]=bufferCount;
+    arguments[3]=bufferCount;
     if (Num_procs > 1) {
-      if ((bufferCount < 1) || (bufferCount >= Num_procs)) {
-        printf("ERROR: bufferCount must be >= 1 and < # procs : %d\n", bufferCount);
+      if ((bufferCount < 1) || (bufferCount >= (Num_procs / group_size))) {
+        printf("ERROR: bufferCount must be >= 1 and < # groups : %d\n", bufferCount);
         error = 1; goto ENDOFTESTS;
       }
     }
 
-    if (argc == 5) Tile_order = atoi(*++argv);
-    arguments[3]=Tile_order;
+    if (argc == 6) Tile_order = atoi(*++argv);
+    arguments[4]=Tile_order;
 
     ENDOFTESTS:;
   }
@@ -238,6 +251,7 @@ int main(int argc, char ** argv)
 
   if (my_ID == root) {
     printf("Number of ranks      = %d\n", Num_procs);
+    printf("PE group size        = %d\n", group_size);
     printf("Matrix order         = %d\n", order);
     printf("Number of iterations = %d\n", iterations);
     printf("Number of buffers    = %d\n", bufferCount);
@@ -249,15 +263,19 @@ int main(int argc, char ** argv)
   shmem_barrier_all();
 
   /*  Broadcast input data to all ranks */
-  shmem_broadcast32(&arguments[0], &arguments[0], 4, root, 0, 0, Num_procs, pSync_bcast);
+  shmem_broadcast32(&arguments[0], &arguments[0], 5, root, 0, 0, Num_procs, pSync_bcast);
 
-  iterations=arguments[0];
-  order=arguments[1];
-  bufferCount=arguments[2];
-  Tile_order=arguments[3];
+  group_size=arguments[0];
+  iterations=arguments[1];
+  order=arguments[2];
+  bufferCount=arguments[3];
+  Tile_order=arguments[4];
 
   shmem_barrier_all();
   prk_shmem_free(arguments);
+
+  group_ID=my_ID/group_size;
+  local_ID=my_ID%group_size;
 
   /* a non-positive tile size means no tiling of the local transpose */
   tiling = (Tile_order > 0) && (Tile_order < order);
@@ -269,8 +287,10 @@ int main(int argc, char ** argv)
 ** blocks of order block_order.
 *********************************************************************/
 
-  Block_order    = order/Num_procs;
-  colstart       = Block_order * my_ID;
+  Num_groups     = Num_procs/group_size;
+  Block_order    = order/Num_groups;
+  group_ID       = my_ID/group_size;
+  colstart       = Block_order * group_ID;
   Colblock_size  = order * Block_order;
   Block_size     = Block_order * Block_order;
 
@@ -278,22 +298,24 @@ int main(int argc, char ** argv)
 ** Create the column block of the test matrix, the row block of the 
 ** transposed matrix, and workspace (workspace only if #procs>1)
 *********************************************************************/
-  A_p = (double *)prk_malloc(Colblock_size*sizeof(double));
+  A_p = (double *)prk_shmem_align(prk_get_alignment(),Colblock_size*sizeof(double));
   if (A_p == NULL){
     printf(" Error allocating space for original matrix on node %d\n",my_ID);
     error = 1;
   }
   bail_out(error);
 
-  B_p = (double *)prk_malloc(Colblock_size*sizeof(double));
+  B_p = (double *)prk_shmem_align(prk_get_alignment(),Colblock_size*sizeof(double));
   if (B_p == NULL){
     printf(" Error allocating space for transpose matrix on node %d\n",my_ID);
     error = 1;
   }
+
   bail_out(error);
 
   if (Num_procs>1) {
     Work_in_p   = (double**)prk_malloc(bufferCount*sizeof(double));
+    Work_in_ptr = (double**)prk_malloc(bufferCount*sizeof(double));
 
     Work_out_p = (double *) prk_shmem_align(prk_get_alignment(),Block_size*sizeof(double));
     recv_flag  = (int*)     prk_shmem_align(prk_get_alignment(),bufferCount*sizeof(int));
@@ -302,13 +324,20 @@ int main(int argc, char ** argv)
       error = 1;
     }
 
-    if (bufferCount < (Num_procs - 1)) {
-      send_flag = (int*) prk_shmem_align(prk_get_alignment(), (Num_procs-1) * sizeof(int));
+    if (bufferCount < (Num_groups - 1)) {
+      send_flag = (int*) prk_shmem_align(prk_get_alignment(), (Num_groups-1) * sizeof(int));
 
       if (send_flag == NULL) {
 	printf("Error allocating space for flags on node %d\n", my_ID);
 	error = 1;
       }
+    }
+
+    local_flag = (int*) prk_shmem_align(prk_get_alignment(), sizeof(int));
+
+    if(local_flag == NULL) {
+      printf("Error allocating space for flags on node %d\n", my_ID);
+      error = 1;
     }
 
     bail_out(error);
@@ -322,18 +351,51 @@ int main(int argc, char ** argv)
       bail_out(error);
     }
 
-    if (bufferCount < (Num_procs - 1)) {
+    if (bufferCount < (Num_groups - 1)) {
       for(i=0;i<bufferCount;i++)
         send_flag[i]=0;
     }
 
-    for(i=0;i<Num_procs-1;i++)
+    for(i=0;i<Num_groups-1;i++)
       recv_flag[i]=0;
+
+    local_flag[0] = 0;
+
+    shmem_barrier_all();
+
+    for (i=0; i < bufferCount; i++) {
+      Work_in_ptr[i] = shmem_ptr(&Work_in_p[i][0], my_ID - local_ID);
+
+      if (Work_in_ptr[i] == NULL) {
+	printf("PE %d cannot use pointer to access PE %d's in buffers\n", my_ID, my_ID - local_ID);
+	error = 1;
+      }
+    }
+
+    Work_out_ptr = shmem_ptr(&Work_out_p[0], my_ID - local_ID);
+
+    if (Work_out_ptr == NULL) {
+      printf("PE %d cannot use pointer to access PE %d's out buffer\n", my_ID, my_ID - local_ID);
+      error = 1;
+    }
   }
+
+  shmem_barrier_all();
+
+  A_ptr = shmem_ptr(&A_p[0], my_ID - local_ID);
+  B_ptr = shmem_ptr(&B_p[0], my_ID - local_ID);
+
+  if ((A_ptr == NULL) || (B_ptr == NULL)) {
+    printf("PE %d cannot use pointer to access PE %d's matrix blocks\n", my_ID, my_ID - local_ID);
+    error = 1;
+  }
+
+  bail_out(error);
   
   /* Fill the original column matrices                                              */
   istart = 0;  
-  for (j=0;j<Block_order;j++) 
+  int chunk_size = Block_order / group_size;
+  for (j=local_ID*chunk_size;j<(local_ID+1)*chunk_size;j++) 
     for (i=0;i<order; i++)  {
       A(i,j) = (double) (order*(j+colstart) + i);
       B(i,j) = 0.0;
@@ -341,11 +403,13 @@ int main(int argc, char ** argv)
 
   shmem_barrier_all();
 
-  if (bufferCount < (Num_procs - 1)) {
-    if (Num_procs > 1) {
-      for ( i = 0; i < bufferCount; i++) {
-        recv_from = (my_ID + i + 1)%Num_procs;
-        shmem_int_inc(&send_flag[i], recv_from);
+  if(local_ID == 0) {
+    if (bufferCount < (Num_groups - 1)) {
+      if (Num_procs > 1) {
+        for ( i = 0; i < bufferCount; i++) {
+          recv_from = (group_ID + i + 1)%Num_procs;
+          shmem_int_inc(&send_flag[i], recv_from*group_size);
+        }
       }
     }
   }
@@ -363,73 +427,82 @@ int main(int argc, char ** argv)
     /* do the local transpose                                                     */
     istart = colstart; 
     if (!tiling) {
-      for (i=0; i<Block_order; i++) 
+      for (i=local_ID*chunk_size; i<(local_ID+1)*chunk_size; i++) 
         for (j=0; j<Block_order; j++) {
           B(j,i) += A(i,j);
           A(i,j) += 1.0;
 	}
     }
     else {
-      for (i=0; i<Block_order; i+=Tile_order) 
+      for (i=local_ID*chunk_size; i<(local_ID+1)*chunk_size; i+=Tile_order) 
         for (j=0; j<Block_order; j+=Tile_order) 
-          for (it=i; it<MIN(Block_order,i+Tile_order); it++)
+          for (it=i; it<MIN((local_ID+1)*chunk_size,i+Tile_order); it++)
             for (jt=j; jt<MIN(Block_order,j+Tile_order);jt++) {
               B(jt,it) += A(it,jt); 
               A(it,jt) += 1.0;
             }
     }
 
-    for (phase=1; phase<Num_procs; phase++){
-      recv_from = (my_ID + phase            )%Num_procs;
-      send_to   = (my_ID - phase + Num_procs)%Num_procs;
+    for (phase=1; phase<Num_groups; phase++){
+      recv_from = (group_ID + phase            )%Num_groups;
+      send_to   = (group_ID - phase + Num_procs)%Num_groups;
 
-      targetBuffer = (iter * (Num_procs - 1) + (phase - 1)) % bufferCount;
+      targetBuffer = (iter * (Num_groups - 1) + (phase - 1)) % bufferCount;
 
       istart = send_to*Block_order; 
       if (!tiling) {
-        for (i=0; i<Block_order; i++) 
+        for (i=local_ID*chunk_size; i<(local_ID+1)*chunk_size; i++) 
           for (j=0; j<Block_order; j++){
 	    Work_out(j,i) = A(i,j);
             A(i,j) += 1.0;
 	  }
       }
       else {
-        for (i=0; i<Block_order; i+=Tile_order) 
+        for (i=local_ID*chunk_size; i<(local_ID+1)*chunk_size; i+=Tile_order) 
           for (j=0; j<Block_order; j+=Tile_order) 
-            for (it=i; it<MIN(Block_order,i+Tile_order); it++)
+            for (it=i; it<MIN((local_ID+1)*chunk_size,i+Tile_order); it++)
               for (jt=j; jt<MIN(Block_order,j+Tile_order);jt++) {
                 Work_out(jt,it) = A(it,jt); 
                 A(it,jt) += 1.0;
 	      }
       }
 
-      if (bufferCount < (Num_procs - 1))
-        shmem_int_wait_until(&send_flag[phase-1], SHMEM_CMP_EQ, iter+1);
+      if(local_ID == 0) {
+        if (bufferCount < (Num_groups - 1))
+          shmem_int_wait_until(&send_flag[phase-1], SHMEM_CMP_EQ, iter+1);
 
-      shmem_double_put(&Work_in_p[targetBuffer][0], &Work_out_p[0], Block_size, send_to);
-      shmem_fence();
-      shmem_int_inc(&recv_flag[targetBuffer], send_to);
+        shmem_double_put(&Work_in_p[targetBuffer][0], &Work_out_p[0], Block_size, send_to);
+        shmem_fence();
+        shmem_int_inc(&recv_flag[targetBuffer], send_to);
 
-      i = (iter * (Num_procs - 1) + phase) / bufferCount;
+        i = (iter * (Num_groups - 1) + phase) / bufferCount;
 
-      if ((iter * (Num_procs - 1) + phase) % bufferCount)
-	i++;
+        if ((iter * (Num_groups - 1) + phase) % bufferCount)
+	  i++;
 
-      shmem_int_wait_until(&recv_flag[targetBuffer], SHMEM_CMP_EQ, i);
+        shmem_int_wait_until(&recv_flag[targetBuffer], SHMEM_CMP_EQ, i);
+
+	for (i = 1; i < group_size; i++)
+	  shmem_int_inc(&local_flag[0], my_ID + i);
+      }
+      else
+	shmem_int_wait_until(&local_flag[0], SHMEM_CMP_EQ, iter*(Num_groups-1)+phase);
 
       istart = recv_from*Block_order; 
       /* scatter received block to transposed matrix; no need to tile */
-      for (j=0; j<Block_order; j++)
+      for (j=local_ID*chunk_size; j<(local_ID+1)*chunk_size; j++)
         for (i=0; i<Block_order; i++) 
           B(i,j) += Work_in(targetBuffer, i,j);
 
-      if (bufferCount < (Num_procs - 1)) {
-        if ((phase + bufferCount) < Num_procs)
-	  recv_from = (my_ID + phase + bufferCount) % Num_procs;
-        else
-	  recv_from = (my_ID + phase + bufferCount + 1 - Num_procs) % Num_procs;
+      if (local_ID == 0) {
+        if (bufferCount < (Num_groups - 1)) {
+          if ((phase + bufferCount) < Num_groups)
+	    recv_from = (my_ID + phase + bufferCount) % Num_groups;
+          else
+	    recv_from = (my_ID + phase + bufferCount + 1 - Num_groups) % Num_groups;
 
-        shmem_int_inc(&send_flag[(phase+bufferCount-1)%(Num_procs-1)], recv_from);
+          shmem_int_inc(&send_flag[(phase+bufferCount-1)%(Num_groups-1)], recv_from);
+        }
       }
     }  /* end of phase loop  */
   } /* end of iterations */
